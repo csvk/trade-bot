@@ -45,21 +45,49 @@ class OandaApi:
         except Exception as error:
             return False, {'Exception': error}
 
-    def get_account_ep(self, ep, data_key):
-        url = f"accounts/{ApiCreds.ACCOUNT_ID}/{ep}"
-        ok, data = self.make_request(url);
+    def get_account_ep(self, ep, keys):
+        assert type(keys) == list or type(keys) == str, 'API endpoint key can be string or list of strings'
 
-        if ok == True and data_key in data:
-            return data[data_key]
+        if type(keys) != list:
+            keys = [keys]
+
+        url = f"accounts/{ApiCreds.ACCOUNT_ID}/{ep}"
+        ok, data = self.make_request(url)
+
+        if ok == True:
+            missing_keys = [key for key in keys if key not in data]
+            if len(missing_keys) == 0:
+                ret_val = data[keys(0)] if len(keys) == 0 else {k: data[k] for k in keys}
+                return ok, ret_val
+            else:
+                present_keys = [key for key in keys if key not in missing_keys]
+                return False, {k: data[k] for k in present_keys}
         else:
-            print("ERROR get_account_ep()", data)
-            return None
+            return False, None
 
     def get_account_summary(self):
         return self.get_account_ep("summary", "account")
 
     def get_account_instruments(self):
         return self.get_account_ep("instruments", "instruments")
+    
+    def get_last_transaction_id(self):
+        ok, data = self.get_account_ep("summary", "lastTransactionID")
+
+        if ok == True:
+            return ok, data["lastTransactionID"]
+        else:
+            return False, None
+        
+    def get_state_changes(self, last_transaction_id):
+        url = f"accounts/{ApiCreds.ACCOUNT_ID}/changes?sinceTransactionID={last_transaction_id}"
+        ok, data = self.make_request(url)
+
+        changes = data["changes"] if "changes" in data else None
+        state = data["state"] if "state" in data else None
+        lastTransactionID = data["lastTransactionID"] if "lastTransactionID" in data else None
+
+        return ok, changes, state, lastTransactionID
 
     def fetch_candles(self, pair_name, count=10, granularity="H1",
                             price="MBA", date_f=None, date_t=None):
@@ -79,19 +107,18 @@ class OandaApi:
         ok, data = self.make_request(url, params=params)
     
         if ok == True and 'candles' in data:
-            return data['candles']
+            return ok, data['candles']
         else:
-            print("ERROR fetch_candles()", params, data)
-            return None
+            return False, None
 
     def get_candles_df(self, pair_name, **kwargs):
 
-        data = self.fetch_candles(pair_name, **kwargs)
+        ok, data = self.fetch_candles(pair_name, **kwargs)
 
-        if data is None:
-            return None
-        if len(data) == 0:
-            return pd.DataFrame()
+        if not ok or data is None:
+            return False, None
+        # if len(data) == 0:
+        #     return pd.DataFrame()
         
         prices = ['mid', 'bid', 'ask']
         ohlc = ['o', 'h', 'l', 'c']
@@ -109,13 +136,14 @@ class OandaApi:
                         new_dict[f"{p}_{o}"] = float(candle[p][o])
             final_data.append(new_dict)
         df = pd.DataFrame.from_dict(final_data)
-        return df
+        return True, df
 
     def last_complete_candle(self, pair_name, granularity):
-        df = self.get_candles_df(pair_name, granularity=granularity, count=10)
-        if df.shape[0] == 0:
-            return None
-        return df.iloc[-1].time
+        ok, df = self.get_candles_df(pair_name, granularity=granularity, count=10)
+        if ok == True: 
+            return ok, df.iloc[-1].time
+        else:
+            return False, None
 
     def place_trade(self, instrument: dict, units: float, direction: int,
                         stop_loss: float=None, take_profit: float=None):
@@ -144,26 +172,16 @@ class OandaApi:
             tpd = dict(price=str(round(take_profit, instrument.displayPrecision)))
             data['order']['takeProfitOnFill'] = tpd
 
-        #print(data)
-
         ok, response = self.make_request(url, verb="post", data=data, code=201)
 
-        #print(ok, response)
-
         if ok == True and 'orderFillTransaction' in response:
-            return response['orderFillTransaction']['id']
+            return ok, response['orderFillTransaction']['id']
         else:
-            return None
+            return False, None
             
     def close_trade(self, trade_id):
         url = f"accounts/{ApiCreds.ACCOUNT_ID}/trades/{trade_id}/close"
         ok, _ = self.make_request(url, verb="put", code=200)
-
-        if ok == True:
-            print(f"Closed {trade_id} successfully")
-        else:
-            print(f"Failed to close {trade_id}")
-
         return ok
 
     def get_open_trade(self, trade_id):
@@ -171,15 +189,29 @@ class OandaApi:
         ok, response = self.make_request(url)
 
         if ok == True and 'trade' in response:
-            return OpenTrade(response['trade'])
+            return ok, OpenTrade(response['trade'])
+        else:
+            return False, None
 
     def get_open_trades(self):
         url = f"accounts/{ApiCreds.ACCOUNT_ID}/openTrades"
         ok, response = self.make_request(url)
 
         if ok == True and 'trades' in response:
-            return [OpenTrade(x) for x in response['trades']]
+            # return ok, [OpenTrade(x) for x in response['trades']]
+            return response["trades"]
+        else:
+            return False, list()
+        
+    def get_pending_orders(self):
+        url = f"accounts/{ApiCreds.ACCOUNT_ID}/pendingOrders"
+        ok, response = self.make_request(url)
 
+        if ok == True and 'orders' in response:
+            return response["orders"]
+        else:
+            return False, list()
+        
     def get_prices(self, instruments_list):
         url = f"accounts/{ApiCreds.ACCOUNT_ID}/pricing"
 
@@ -191,9 +223,9 @@ class OandaApi:
         ok, response = self.make_request(url, params=params)
 
         if ok == True and 'prices' in response and 'homeConversions' in response:
-            return [ApiPrice(x, response['homeConversions']) for x in response['prices']]
-
-        return None
+            return ok, [ApiPrice(x, response['homeConversions']) for x in response['prices']]
+        else:
+            return False, list()
 
 
 

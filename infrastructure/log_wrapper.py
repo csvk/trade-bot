@@ -1,5 +1,6 @@
 import logging
 import os
+from tabulate import tabulate
 
 LOG_FORMAT = "%(asctime)s %(message)s"
 DEFAULT_LEVEL = logging.DEBUG
@@ -26,6 +27,13 @@ class LogWrapper:
     def create_directory(self):
         if not os.path.exists(LogWrapper.PATH):
             os.makedirs(LogWrapper.PATH)
+
+    def log_message(self, msg):
+        self.logger.debug(msg)
+
+    def log_table(self, header, data):
+        table = tabulate(data, header, tablefmt='grid')
+        self.logger.info(table)
 
 
 

@@ -1,11 +1,10 @@
 class TradeSettings:
 
     def __init__(self, ob, pair):
-        self.n_ma = ob['n_ma']
-        self.n_std = ob['n_std']
-        self.maxspread = ob['maxspread']
-        self.mingain = ob['mingain']
-        self.riskreward = ob['riskreward']
+        self.hedge_pips = ob['hedge_pips']
+        self.tp_pips = ob['tp_pips']
+        self.capacity = ob['capacity']
+        self.keep = ob['keep']
 
     def __repr__(self):
         return str(vars(self))

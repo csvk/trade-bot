@@ -17,8 +17,8 @@ class CandleManager:
         triggered = []
 
         for pair in self.pairs_list:
-            current = self.api.last_complete_candle(pair, self.granularity)
-            if current is None:
+            ok, current = self.api.last_complete_candle(pair, self.granularity)
+            if not ok:
                 self.log_message("Unable to get candle", pair)
                 continue
             self.timings[pair].is_ready = False

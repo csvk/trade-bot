@@ -1,4 +1,4 @@
 {
-    "interval": 5,
+    "sleep": 5,
     "granularity": "M1"
 }

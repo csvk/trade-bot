@@ -17,14 +17,14 @@ class TradeManager:
         self.logs = logs
 
         self.load_settings()
-        self.set_last_transaction_id()
+        self.get_last_transaction_id()
 
     def load_settings(self):
         with open("./bot/trade_settings.json", "r") as f:
             data = json.loads(f.read())
             self.trade_settings = { k: Settings(v) for k, v in data.items() }
 
-    def set_last_transaction_id(self):
+    def get_last_transaction_id(self):
         ok, last_transaction_id = self.api.get_last_transaction_id()
 
         if not ok:
@@ -34,7 +34,7 @@ class TradeManager:
             self.last_transaction_id = last_transaction_id
         return ok
 
-    def refresh_instrument_state(self):
+    def refresh_instrument_states(self):
         self.instrument_states = dict()
         for position in self.state['positions']:
             self.instrument_states[position['instrument']] = dict(
@@ -77,16 +77,41 @@ class TradeManager:
                 self.instrument_states[instrument]['short_total'] = \
                     self.instrument_states[instrument]['short_total'] - units
 
-    def log_instrument_state(self):
+    def log_instrument_states(self, init):
         header = ['instrument', 'long_open', 'long_pending', 'total_long', 'total_short', 'short_open', 'short_pending']
-        for instrument, state in self.instrument_states.items():
-            self.logs[instrument].log_message(f"REFRESH: Last transaction id: {self.last_transaction_id}")
-            data = [list(state.values())]
-            # print(header)
-            # print(data)
-            self.logs[instrument].log_table(header, data)               
+        for instrument in self.trade_settings.keys():
+            found = False
+            change_types = ['ordersCreated','ordersCancelled', 'ordersFilled', 'ordersTriggered', 'tradesOpened',
+                            'tradesReduced', 'tradesClosed']
+            for change_type in change_types:
+                for change in self.changes[change_type]:
+                    if 'instrument' in change and change['instrument'] == instrument:
+                        self.logs[instrument].log_message(f"REFRESH: Last transaction id: {self.last_transaction_id}")
+                        data = [list(self.instrument_states[instrument].values())]
+                        self.logs[instrument].log_table(header, data)    
+                        found = True
+                    if found:
+                        break
+                if found:
+                    break 
+
+        if init:
+            for instrument, state in self.instrument_states.items():
+                self.logs[instrument].log_message(f"REFRESH: Last transaction id: {self.last_transaction_id}")
+                data = [list(state.values())]
+                self.logs[instrument].log_table(header, data)               
     
-    def refresh_state(self):
+    # def is_changed(self, instrument):
+    #     if  len(self.changes["ordersCreated"]) + len(self.changes["ordersCancelled"]) + \
+    #         len(self.changes["ordersFilled"]) + len(self.changes["ordersTriggered"]) + \
+    #         len(self.changes["tradesOpened"]) + len(self.changes["tradesReduced"]) + \
+    #         len(self.changes["tradesClosed"]) + len(self.changes["positions"]) + \
+    #         len(self.changes["transactions"]) == 0:
+    #         return False
+    #     else:
+    #         return True
+    
+    def refresh_state(self, init=False):
         ok, changes, state, last_transaction_id = self.api.get_state_changes(self.last_transaction_id)
 
         if changes is None or state is None or last_transaction_id is None:
@@ -99,9 +124,11 @@ class TradeManager:
                 self.log_message(f"last_transaction_id: {last_transaction_id}", defs.ERROR_LOG)           
 
         else:
-            self.changes, self.state, self.lastTransactionID = changes, state, last_transaction_id
-            self.refresh_instrument_state()
-            self.log_instrument_state()
+            self.changes, self.state = changes, state
+            if init or last_transaction_id != self.last_transaction_id or 1:
+                self.last_transaction_id = last_transaction_id
+                self.refresh_instrument_states()
+                self.log_instrument_states(init)
 
     def trade_is_open(self, pair, api: OandaApi):
 

@@ -53,6 +53,8 @@ class Bot:
             self.logs[k] = LogWrapper(k)
             self.logs[k].log_message(f"{k}: {self.manager.trade_settings[k]}")  
 
+        self.manager.refresh_state(init=True)
+
     def run(self):
         while True:
             DEBUG = True

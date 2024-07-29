@@ -1,6 +1,7 @@
 
 from sys import exit
 import json
+from random import choice
 from api.oanda_api import OandaApi
 from bot.trade_risk_calculator import get_trade_units
 
@@ -20,10 +21,17 @@ class TradeManager:
         self.get_last_transaction_id()
 
     def load_settings(self):
-        with open("./bot/trade_settings.json", "r") as f:
-            data = json.loads(f.read())
-            self.trade_settings = { k: Settings(v) for k, v in data.items() }
+        with open("./bot/instr_settings.json", "r") as f:
+            instr_settings = json.loads(f.read())
 
+        api_settings = self.get_instrument_settings(instr_settings.keys())
+        self.trade_settings = { k: Settings(
+             Settings.merge(instr_settings[k], 
+                            Settings.typecast(api_settings[k], defs.INSTR_KEYS))) for k in instr_settings.keys()}
+
+    def get_instrument_settings(self, instruments):
+        return self.api.get_instrument_settings(instruments)
+    
     def get_last_transaction_id(self):
         ok, last_transaction_id = self.api.get_last_transaction_id()
 
@@ -34,17 +42,42 @@ class TradeManager:
             self.last_transaction_id = last_transaction_id
         return ok
 
+    def process_trades(self):
+        self.refresh_state()
+        self.balance_on_close()
+        self.balance_just_in_case()
+        self.fresh_entry()        
+    
+    def refresh_state(self, init=False):
+        ok, changes, state, last_transaction_id = self.api.get_state_changes(self.last_transaction_id)
+
+        if changes is None or state is None or last_transaction_id is None:
+            self.log_message(f"ERROR: Error in refreshing state", defs.ERROR_LOG)
+            if changes is None:
+                self.log_message(f"changes: {changes}", defs.ERROR_LOG)
+            if state is None:
+                self.log_message(f"state: {state}", defs.ERROR_LOG)
+            if last_transaction_id is None:
+                self.log_message(f"last_transaction_id: {last_transaction_id}", defs.ERROR_LOG)           
+
+        else:
+            self.changes, self.state = changes, state
+            if init or last_transaction_id != self.last_transaction_id or 1:
+                self.last_transaction_id = last_transaction_id
+                self.refresh_instrument_states()
+                self.log_instrument_states(init)
+    
     def refresh_instrument_states(self):
         self.instrument_states = dict()
         for position in self.state['positions']:
             self.instrument_states[position['instrument']] = dict(
                 instrument=position['instrument'],
-                long_open_trade=0,
-                long_pending_order=0,
+                long_position=0,
+                long_order=0,
                 long_total=0,
                 short_total=0,
-                short_open_trade=0,
-                short_pending_order=0
+                short_position=0,
+                short_order=0
             )
 
         open_trades = self.api.get_open_trades()
@@ -52,13 +85,13 @@ class TradeManager:
             instrument = trade['instrument']
             units = int(trade['currentUnits'])
             if units > 0:
-                self.instrument_states[instrument]['long_open_trade'] = \
-                    self.instrument_states[instrument]['long_open_trade'] + units
+                self.instrument_states[instrument]['long_position'] = \
+                    self.instrument_states[instrument]['long_position'] + units
                 self.instrument_states[instrument]['long_total'] = \
                     self.instrument_states[instrument]['long_total'] + units
             else:
-                self.instrument_states[instrument]['short_open_trade'] = \
-                    self.instrument_states[instrument]['short_open_trade'] - units
+                self.instrument_states[instrument]['short_position'] = \
+                    self.instrument_states[instrument]['short_position'] - units
                 self.instrument_states[instrument]['short_total'] = \
                     self.instrument_states[instrument]['short_total'] - units
         
@@ -67,13 +100,13 @@ class TradeManager:
             instrument = order['instrument']
             units = int(order['units'])
             if units > 0:
-                self.instrument_states[instrument]['long_pending_order'] = \
-                    self.instrument_states[instrument]['long_pending_order'] + units
+                self.instrument_states[instrument]['long_order'] = \
+                    self.instrument_states[instrument]['long_order'] + units
                 self.instrument_states[instrument]['long_total'] = \
                     self.instrument_states[instrument]['long_total'] + units
             else:
-                self.instrument_states[instrument]['short_pending_order'] = \
-                    self.instrument_states[instrument]['short_pending_order'] - units
+                self.instrument_states[instrument]['short_order'] = \
+                    self.instrument_states[instrument]['short_order'] - units
                 self.instrument_states[instrument]['short_total'] = \
                     self.instrument_states[instrument]['short_total'] - units
 
@@ -111,24 +144,89 @@ class TradeManager:
     #     else:
     #         return True
     
-    def refresh_state(self, init=False):
-        ok, changes, state, last_transaction_id = self.api.get_state_changes(self.last_transaction_id)
+    def fresh_entry(self):
+        for instrument in self.trade_settings.keys():
+            if self.instrument_states[instrument]['long_position'] \
+                + self.instrument_states[instrument]['short_position'] == 0:
 
-        if changes is None or state is None or last_transaction_id is None:
-            self.log_message(f"ERROR: Error in refreshing state", defs.ERROR_LOG)
-            if changes is None:
-                self.log_message(f"changes: {changes}", defs.ERROR_LOG)
-            if state is None:
-                self.log_message(f"state: {state}", defs.ERROR_LOG)
-            if last_transaction_id is None:
-                self.log_message(f"last_transaction_id: {last_transaction_id}", defs.ERROR_LOG)           
+                #####################
+                # Enter new trade in direction of last profitable trade at capacity
+                # Consider trade direction on init or no recent profitable trade
+                #####################
 
-        else:
-            self.changes, self.state = changes, state
-            if init or last_transaction_id != self.last_transaction_id or 1:
-                self.last_transaction_id = last_transaction_id
-                self.refresh_instrument_states()
-                self.log_instrument_states(init)
+                for change in self.changes['tradesClosed']:
+                    if 'instrument' in change and change['instrument'] == instrument:
+                        units = self.trade_settings[instrument].tradeUnitsPrecision(
+                            change['initialUnits']
+                        )
+                    else:
+                        units = self.trade_settings[instrument].tradeUnitsPrecision(
+                            choice([defs.BUY, defs.SELL]) * self.trade_settings[instrument]['capacity']
+                        )
+
+                
+
+
+
+
+
+
+
+                #####################
+                # Cancel pending orders
+                #####################
+
+                #####################
+                # Create opposite stop order to balance
+                #####################      
+                pass
+    
+    def balance_on_close(self):
+        for instrument in self.trade_settings.keys():
+            ###########################
+            # if trade closed on profit
+            ###########################
+
+                #####################
+                # reduce farthest trade
+                #####################
+
+                #####################
+                # re-enter in same direction at capacity
+                #####################
+
+                #####################
+                # Create opposite stop order to balance
+                #####################      
+                pass
+        
+    def balance_just_in_case(self):
+        for instrument in self.trade_settings.keys():
+            ###########################
+            # if instrument not balanced
+            ###########################
+
+                #####################
+                # if within trigger price from last entry
+                #####################
+
+                    #####################
+                    # Create opposite stop order to balance
+                    #####################    
+
+                #####################
+                # else
+                #####################
+                
+                    #####################
+                    # balance at market
+                    #####################
+                pass
+                
+
+    def check_balanced_state(self):
+        pass
+        
 
     def trade_is_open(self, pair, api: OandaApi):
 

@@ -1,7 +1,7 @@
 {
     "EUR_USD": {
-    "hedge_pips": 10,
-    "tp_pips": 20,
+    "hedge_pips": 5,
+    "tp_pips": 10,
     "capacity": 10000,
     "keep": 0.10
     },

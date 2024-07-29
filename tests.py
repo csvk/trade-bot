@@ -1,8 +1,5 @@
-d = dict(a=1, b=2)
+var = '12.1'
 
-key = 'c'
+t = float
 
-if key in d and d[key] == 1:
-    print(d[key])
-else:
-    print(key, 'missing')
+print(type(var), type(t(var)))

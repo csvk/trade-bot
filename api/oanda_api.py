@@ -10,7 +10,8 @@ from models.api_price import ApiPrice
 from models.open_trade import OpenTrade
 
 class OandaApi:
-
+    PATH = "./data/"
+    INSTR_FILE = "instruments.json"
 
     def __init__(self):
         self.session = requests.Session()
@@ -18,6 +19,7 @@ class OandaApi:
             "Authorization": f"Bearer {ApiCreds.API_KEY}",
             "Content-Type": "application/json"
         })
+        self.download_account_instruments()
 
     def make_request(self, url, verb='get', code=200, params=None, data=None, headers=None):
         full_url = f"{ApiCreds.OANDA_URL}/{url}"
@@ -70,6 +72,25 @@ class OandaApi:
 
     def get_account_instruments(self):
         return self.get_account_ep("instruments", "instruments")
+    
+    def download_account_instruments(self):
+        attempts = 0
+        while attempts < 3:
+            ok, data = self.get_account_instruments()
+            if ok == True and data is not None:
+                break
+            attempts += 1
+
+        if data is not None and len(data) != 0:
+            self.instruments = {d['name']: d for d in data['instruments']}
+            file = f"{self.PATH}/{self.INSTR_FILE}"
+            with open(file, "w") as f:
+                f.write(json.dumps(self.instruments, indent=2))
+        else:
+            raise 'Instruments download error'
+        
+    def get_instrument_settings(self, instruments):
+        return {i: self.instruments[i] for i in instruments}
     
     def get_last_transaction_id(self):
         ok, data = self.get_account_ep("summary", "lastTransactionID")
@@ -144,6 +165,9 @@ class OandaApi:
             return ok, df.iloc[-1].time
         else:
             return False, None
+        
+    # def place_market_order(self, instrument, units):
+
 
     def place_trade(self, instrument: dict, units: float, direction: int,
                         stop_loss: float=None, take_profit: float=None):

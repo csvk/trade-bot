@@ -10,7 +10,6 @@ from api.oanda_api import OandaApi
 from constants import defs
 
 
-
 class Bot:
 
     def __init__(self):
@@ -59,10 +58,10 @@ class Bot:
         while True:
             DEBUG = True
             if DEBUG:
-                self.manager.refresh_state()
+                self.manager.process_trades()
             else:
                 try:
-                    self.manager.refresh_state()
+                    self.manager.process_trades()
                 except Exception as error:
                     self.logs[defs.ERROR_LOG].log_message(f"CRASH: {error}")
                     break
